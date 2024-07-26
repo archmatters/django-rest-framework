@@ -628,6 +628,21 @@ class TestUniqueConstraintValidation(TestCase):
         ids_in_qs = {frozenset(v.queryset.values_list(flat=True)) for v in validators if hasattr(v, "queryset")}
         assert ids_in_qs == {frozenset([1]), frozenset([3])}
 
+    def test_single_field_unique_validator_condition(self):
+        UniqueConstraintModel.objects.create(
+            race_name='condition',
+            position=1,
+            global_id=12,
+            fancy_conditions=12
+        )
+        serializer = UniqueConstraintSerializer(data={
+            'race_name': 'condition',
+            'position': 3,
+            'global_id': -1,
+            'fancy_conditions': 12,
+        })
+        assert serializer.is_valid()
+
 
 # Tests for `UniqueForDateValidator`
 # ----------------------------------
