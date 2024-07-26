@@ -1425,7 +1425,7 @@ class ModelSerializer(Serializer):
 
         return extra_kwargs
 
-    def get_unique_together_constraints(self, model):
+    def get_unique_constraints(self, model):
         """
         Returns iterator of (fields, queryset, condition_fields, condition),
         each entry describes an unique together constraint on `fields` in `queryset`
@@ -1435,12 +1435,17 @@ class ModelSerializer(Serializer):
             for unique_together in parent_class._meta.unique_together:
                 yield unique_together, model._default_manager, [], None
             for constraint in parent_class._meta.constraints:
-                if isinstance(constraint, models.UniqueConstraint) and len(constraint.fields) > 1:
+                if isinstance(constraint, models.UniqueConstraint):
                     queryset = model._default_manager
                     if constraint.condition is None:
                         condition_fields = []
                     else:
                         condition_fields = list(get_referenced_base_fields_from_q(constraint.condition))
+                    # when the constraint is on a single field, and the condition fields include
+                    # no other fields, that constraint has already been covered by a UniqueValidator
+                    # on the field.
+                    if len(constraint.fields) == 1 and (len(condition_fields) == 0 or condition_fields == constraint.fields):
+                        continue
                     yield (constraint.fields, queryset, condition_fields, constraint.condition)
 
     def get_uniqueness_extra_kwargs(self, field_names, declared_fields, extra_kwargs):
@@ -1471,11 +1476,11 @@ class ModelSerializer(Serializer):
 
         unique_constraint_names -= {None}
 
-        # Include each of the `unique_together` and `UniqueConstraint` field names,
-        # so long as all the field names are included on the serializer.
-        for unique_together_list, queryset, condition_fields, condition in self.get_unique_together_constraints(model):
-            if set(field_names).issuperset((*unique_together_list, *condition_fields)):
-                unique_constraint_names |= set((*unique_together_list, *condition_fields))
+        # Include each uniqueness constraint from the model, so long as all the
+        # field names are included on the serializer.
+        for unique_fields, queryset, condition_fields, condition in self.get_unique_constraints(model):
+            if set(field_names).issuperset((*unique_fields, *condition_fields)):
+                unique_constraint_names |= set((*unique_fields, *condition_fields))
 
         # Now we have all the field names that have uniqueness constraints
         # applied, we can add the extra 'required=...' or 'default=...'
@@ -1595,12 +1600,12 @@ class ModelSerializer(Serializer):
         # Note that we make sure to check `unique_together` both on the
         # base model class, but also on any parent classes.
         validators = []
-        for unique_together, queryset, condition_fields, condition in self.get_unique_together_constraints(self.Meta.model):
+        for unique_fields, queryset, condition_fields, condition in self.get_unique_constraints(self.Meta.model):
             # Skip if serializer does not map to all unique together sources
-            if not set(source_map).issuperset((*unique_together, *condition_fields)):
+            if not set(source_map).issuperset((*unique_fields, *condition_fields)):
                 continue
 
-            for source in (*unique_together, *condition_fields):
+            for source in (*unique_fields, *condition_fields):
                 assert len(source_map[source]) == 1, (
                     "Unable to create `UniqueTogetherValidator` for "
                     "`{model}.{field}` as `{serializer}` has multiple "
@@ -1616,7 +1621,7 @@ class ModelSerializer(Serializer):
                     )
                 )
 
-            field_names = tuple(source_map[f][0] for f in unique_together)
+            field_names = tuple(source_map[f][0] for f in unique_fields)
             condition_fields = tuple(source_map[f][0] for f in condition_fields)
             validator = UniqueTogetherValidator(
                 queryset=queryset, fields=field_names, condition_fields=condition_fields, condition=condition

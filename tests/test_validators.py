@@ -612,21 +612,24 @@ class TestUniqueConstraintValidation(TestCase):
     def test_single_field_uniq_validators(self):
         """
         UniqueConstraint with single field must be transformed into
-        field's UniqueValidator
+        a UniqueTogetherValidator on the serializer
         """
         # Django 5 includes Max and Min values validators for IntergerField
         extra_validators_qty = 2 if django_version[0] >= 5 else 0
         #
         serializer = UniqueConstraintSerializer()
-        assert len(serializer.validators) == 2
+        assert len(serializer.validators) == 4
+        # the unique constraint on global_id should be transformed into a UniqueValidator,
+        # since it has no condition involving other fields
         validators = serializer.fields['global_id'].validators
         assert len(validators) == 1 + extra_validators_qty
         assert validators[0].queryset == UniqueConstraintModel.objects
 
-        validators = serializer.fields['fancy_conditions'].validators
-        assert len(validators) == 2 + extra_validators_qty
-        ids_in_qs = {frozenset(v.queryset.values_list(flat=True)) for v in validators if hasattr(v, "queryset")}
-        assert ids_in_qs == {frozenset([1]), frozenset([3])}
+        # the unique constraint on fancy_conditions should be transformed into a UniqueTogetherValidator
+        # because the condition involves other fields
+        assert len(serializer.fields['fancy_conditions'].validators) == 0
+        validators = [v for v in serializer.validators if isinstance(v, UniqueTogetherValidator) and v.fields == ('fancy_conditions',)]
+        assert len(validators) == 2
 
     def test_single_field_unique_validator_condition(self):
         UniqueConstraintModel.objects.create(

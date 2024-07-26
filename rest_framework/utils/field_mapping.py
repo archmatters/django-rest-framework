@@ -8,7 +8,9 @@ from django.core import validators
 from django.db import models
 from django.utils.text import capfirst
 
-from rest_framework.compat import postgres_fields
+from rest_framework.compat import (
+    get_referenced_base_fields_from_q, postgres_fields
+)
 from rest_framework.validators import UniqueValidator
 
 NUMERIC_FIELD_TYPES = (
@@ -79,10 +81,13 @@ def get_unique_validators(field_name, model_field):
     unique_error_message = get_unique_error_message(model_field)
     queryset = model_field.model._default_manager
     for condition in conditions:
-        yield UniqueValidator(
-            queryset=queryset if condition is None else queryset.filter(condition),
-            message=unique_error_message
-        )
+        condition_fields = get_referenced_base_fields_from_q(condition) if condition else set()
+        if len(condition_fields) == 0 or condition_fields == field_set:
+            # Only create field-level unique validators if the condition does not include any other fields.
+            yield UniqueValidator(
+                queryset=queryset if condition is None else queryset.filter(condition),
+                message=unique_error_message,
+            )
 
 
 def get_field_kwargs(field_name, model_field):
